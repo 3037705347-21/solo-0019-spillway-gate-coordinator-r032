@@ -132,15 +132,6 @@ func (m *MemoryRepository) ExecuteCommand(
 	if !exists {
 		return domain.GateCommand{}, domain.Gate{}, domain.NotFound("gate_not_found", "gate id was not found")
 	}
-	zoneKey := gate.ControlZone
-	if _, active := m.activeMoveZone[zoneKey]; active {
-		return domain.GateCommand{}, domain.Gate{}, domain.Conflict(
-			"control_zone_moving",
-			"another movement is active in control zone "+command.GateID,
-		)
-	}
-	m.activeMoveZone[zoneKey] = command.ID
-
 	nextCommand := cloneCommand(command)
 	if err := nextCommand.BeginExecution(attempt.Token, attempt.Operator, attempt.RequestedAt); err != nil {
 		return domain.GateCommand{}, domain.Gate{}, err
@@ -150,6 +141,16 @@ func (m *MemoryRepository) ExecuteCommand(
 	if err := nextGate.StartMovement(nextCommand.ID, attempt.RequestedAt); err != nil {
 		return domain.GateCommand{}, domain.Gate{}, err
 	}
+
+	zoneKey := gate.MovementZone()
+	if _, active := m.activeMoveZone[zoneKey]; active {
+		return domain.GateCommand{}, domain.Gate{}, domain.Conflict(
+			"control_zone_moving",
+			"another movement is active in control zone "+command.GateID,
+		)
+	}
+	m.activeMoveZone[zoneKey] = command.ID
+	defer delete(m.activeMoveZone, zoneKey)
 
 	if attempt.SimulateFault {
 		if err := nextGate.Settle(nextCommand.TargetAperture, true, attempt.RequestedAt); err != nil {
